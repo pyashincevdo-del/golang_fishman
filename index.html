@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Рыбо-Человек — игра</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #050e18; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; font-family: sans-serif; }
+  h1 { color: #7de8c0; font-size: 20px; margin-bottom: 10px; letter-spacing: 1px; }
+  #wrap { width: 680px; height: 520px; position: relative; overflow: hidden; background: #0a1f2e; }
+  #c { display: block; width: 680px; height: 520px; }
+  #ui { position: absolute; top: 10px; left: 0; width: 100%; display: flex; justify-content: space-between; padding: 0 16px; pointer-events: none; }
+  .stat { background: rgba(0,0,0,0.5); color: #fff; padding: 6px 14px; border-radius: 20px; font-size: 14px; font-weight: 500; }
+  #msg { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); background: rgba(5,20,35,0.92); color: #fff; padding: 28px 40px; border-radius: 18px; text-align: center; border: 1px solid rgba(100,200,180,0.3); }
+  #msg h2 { font-size: 26px; margin-bottom: 10px; color: #7de8c0; }
+  #msg p { font-size: 14px; color: #9dd; margin-bottom: 20px; line-height: 1.7; }
+  #startBtn { background: #1d9e75; color: #fff; border: none; padding: 12px 32px; border-radius: 12px; font-size: 16px; cursor: pointer; font-weight: 600; transition: background 0.2s; }
+  #startBtn:hover { background: #0f6e56; }
+  #ctrl { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; }
+  .cbtn { background: rgba(0,0,0,0.55); color: #fff; border: 1px solid rgba(255,255,255,0.25); padding: 10px 20px; border-radius: 10px; font-size: 16px; cursor: pointer; user-select: none; -webkit-user-select: none; touch-action: none; }
+  .cbtn:active { background: rgba(255,255,255,0.15); }
+  #hint { color: #456; font-size: 12px; margin-top: 8px; }
+  @media (max-width: 700px) {
+    #wrap { width: 100vw; height: 60vw; }
+    #c { width: 100vw; height: 60vw; }
+  }
+</style>
+</head>
+<body>
+<h1>🐟 Рыбо-Человек</h1>
+<div id="wrap">
+  <canvas id="c" width="680" height="520"></canvas>
+  <div id="ui">
+    <div class="stat" id="scoreEl">Рыба: 0</div>
+    <div class="stat" id="timeEl">Время: 60</div>
+    <div class="stat" id="levelEl">Уровень: 1</div>
+  </div>
+  <div id="msg">
+    <h2>Рыбо-Человек</h2>
+    <p>Лови рыбу и набирай очки!<br>
+    <b>WASD</b> или <b>стрелки</b> для движения.<br>
+    С уровня 2 появляются <span style="color:#f88">акулы</span> — они отнимают очки!<br>
+    Жёлтая рыбка = 5 очков, зелёная = 3, оранжевая = 2.</p>
+    <button id="startBtn">Начать игру</button>
+  </div>
+  <div id="ctrl">
+    <button class="cbtn" id="btnL">◀</button>
+    <button class="cbtn" id="btnU">▲</button>
+    <button class="cbtn" id="btnD">▼</button>
+    <button class="cbtn" id="btnR">▶</button>
+  </div>
+</div>
+<div id="hint">WASD / стрелки для управления · кнопки внизу на телефоне</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = 680, H = 520;
+
+let state = 'menu';
+let score = 0, timeLeft = 60, level = 1, t = 0;
+let gameTimer = null;
+
+const keys = {};
+const player = { x: 340, y: 260, vx: 0, vy: 0, dir: 1, mouthOpen: 0, eatAnim: 0 };
+let fishes = [], sharks = [], bubbles = [], particles = [];
+
+function spawnFish() {
+  const types = [
+    { color: '#f4a261', pts: 1, size: 14, speed: 0.8 },
+    { color: '#e76f51', pts: 2, size: 11, speed: 1.2 },
+    { color: '#2a9d8f', pts: 3, size: 9,  speed: 1.6 },
+    { color: '#e9c46a', pts: 5, size: 8,  speed: 2.0 },
+  ];
+  const tp = types[Math.floor(Math.random() * types.length)];
+  const side = Math.random() < 0.5;
+  return {
+    x: side ? -30 : W + 30,
+    y: 60 + Math.random() * (H - 130),
+    vx: (side ? 1 : -1) * (tp.speed + Math.random() * 0.5 + (level - 1) * 0.2),
+    vy: (Math.random() - 0.5) * 0.5,
+    ...tp,
+    wobble: Math.random() * Math.PI * 2,
+    alive: true
+  };
+}
+
+function spawnShark() {
+  const side = Math.random() < 0.5;
+  return {
+    x: side ? -60 : W + 60,
+    y: 80 + Math.random() * (H - 160),
+    vx: (side ? 1 : -1) * (1.2 + level * 0.3),
+    vy: 0,
+    alive: true
+  };
+}
+
+function initGame() {
+  score = 0; timeLeft = 60; level = 1; t = 0;
+  player.x = 340; player.y = 260; player.vx = 0; player.vy = 0; player.dir = 1;
+  player.mouthOpen = 0; player.eatAnim = 0;
+  fishes = []; sharks = []; particles = [];
+  bubbles = Array.from({length: 20}, () => ({
+    x: Math.random() * W, y: Math.random() * H,
+    r: 2 + Math.random() * 3,
+    speed: 0.4 + Math.random() * 0.4,
+    wobble: Math.random() * Math.PI * 2
+  }));
+  for (let i = 0; i < 8; i++) fishes.push(spawnFish());
+  if (gameTimer) clearInterval(gameTimer);
+  gameTimer = setInterval(() => {
+    if (state !== 'playing') return;
+    timeLeft--;
+    level = Math.floor((60 - timeLeft) / 15) + 1;
+    if (timeLeft <= 0) endGame();
+  }, 1000);
+}
+
+function endGame() {
+  state = 'over';
+  clearInterval(gameTimer);
+  const el = document.getElementById('msg');
+  el.querySelector('h2').textContent = 'Игра окончена!';
+  el.querySelector('p').innerHTML = `Поймано рыбы: <b style="color:#6f9;font-size:20px">${score}</b><br>Уровень достигнут: <b>${level}</b>`;
+  document.getElementById('startBtn').textContent = 'Играть снова';
+  el.style.display = 'block';
+}
+
+function addParticles(x, y, color) {
+  for (let i = 0; i < 8; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const spd = 1 + Math.random() * 3;
+    particles.push({ x, y, vx: Math.cos(angle)*spd, vy: Math.sin(angle)*spd, color, life: 30, maxLife: 30 });
+  }
+}
+
+function drawBackground() {
+  const gr = ctx.createLinearGradient(0, 0, 0, H);
+  gr.addColorStop(0, '#0d2d45');
+  gr.addColorStop(1, '#071520');
+  ctx.fillStyle = gr;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = 'rgba(100,180,255,0.04)';
+  for (let x = 0; x < W; x += 90) {
+    const sw = 5 + Math.sin(t*0.008 + x*0.01)*3;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x - sw, H);
+    ctx.lineTo(x + sw, H);
+    ctx.lineTo(x + sw*2, 0);
+    ctx.fill();
+  }
+
+  bubbles.forEach(b => {
+    b.y -= b.speed; b.wobble += 0.02;
+    if (b.y < -10) { b.y = H + 10; b.x = Math.random()*W; }
+    ctx.beginPath();
+    ctx.arc(b.x + Math.sin(b.wobble)*3, b.y, b.r, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(180,230,255,0.3)';
+    ctx.fill();
+  });
+
+  ctx.fillStyle = '#162d1e';
+  ctx.beginPath();
+  ctx.moveTo(0, H - 40);
+  for (let x = 0; x <= W; x += 15) ctx.lineTo(x, H - 35 + 8*Math.sin(x*0.04));
+  ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath(); ctx.fill();
+
+  for (let i = 0; i < 7; i++) {
+    const cx = 50 + i * 95;
+    ctx.strokeStyle = i % 2 === 0 ? '#b5451b' : '#e07050';
+    ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+    for (let j = 0; j < 5; j++) {
+      const a = -Math.PI/2 + (j-2)*0.28;
+      ctx.beginPath();
+      ctx.moveTo(cx, H - 40);
+      ctx.lineTo(cx + Math.cos(a)*16, H - 40 + Math.sin(a)*16);
+      ctx.stroke();
+    }
+  }
+}
+
+function drawFish(f) {
+  if (!f.alive) return;
+  f.wobble += 0.06;
+  f.x += f.vx; f.y += f.vy + Math.sin(f.wobble)*0.3;
+  if (f.y < 50) f.vy += 0.05;
+  if (f.y > H - 60) f.vy -= 0.05;
+
+  ctx.save();
+  ctx.translate(f.x, f.y);
+  if (f.vx < 0) ctx.scale(-1, 1);
+
+  ctx.fillStyle = f.color;
+  ctx.beginPath(); ctx.ellipse(0, 0, f.size, f.size*0.55, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(-f.size, -f.size*0.7);
+  ctx.lineTo(-f.size*1.6, 0);
+  ctx.lineTo(-f.size, f.size*0.7);
+  ctx.closePath(); ctx.fill();
+
+  ctx.fillStyle = '#111';
+  ctx.beginPath(); ctx.arc(f.size*0.6, -f.size*0.1, f.size*0.18, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.beginPath(); ctx.arc(f.size*0.65, -f.size*0.15, f.size*0.07, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  if (f.x < -60 || f.x > W + 60) f.alive = false;
+}
+
+function drawShark(s) {
+  if (!s.alive) return;
+  s.x += s.vx;
+  s.vy += (player.y - s.y) * 0.002;
+  s.vy *= 0.97;
+  s.y += s.vy;
+  s.y = Math.max(60, Math.min(H - 80, s.y));
+
+  ctx.save();
+  ctx.translate(s.x, s.y);
+  if (s.vx < 0) ctx.scale(-1, 1);
+
+  ctx.fillStyle = '#4a5a6a';
+  ctx.beginPath(); ctx.ellipse(0, 0, 36, 15, 0, 0, Math.PI*2); ctx.fill();
+
+  ctx.fillStyle = '#3a4a5a';
+  ctx.beginPath(); ctx.moveTo(10,-15); ctx.lineTo(20,-35); ctx.lineTo(30,-15); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-36,-8); ctx.lineTo(-50,0); ctx.lineTo(-36,8); ctx.closePath(); ctx.fill();
+
+  ctx.fillStyle = '#eee';
+  ctx.beginPath(); ctx.ellipse(26, 0, 8, 10, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#1a3a2a';
+  ctx.beginPath(); ctx.moveTo(20,5); ctx.lineTo(36,5); ctx.lineTo(36,10); ctx.lineTo(20,10); ctx.closePath(); ctx.fill();
+
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+  for (let i = 0; i < 4; i++) {
+    ctx.beginPath(); ctx.moveTo(22+i*3, 5); ctx.lineTo(22+i*3, 3); ctx.stroke();
+  }
+  ctx.fillStyle = '#111';
+  ctx.beginPath(); ctx.arc(30, -3, 3, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  if (s.x < -100 || s.x > W + 100) s.alive = false;
+}
+
+function drawPlayer() {
+  const speed = 3.5 + level * 0.3;
+  if (keys['ArrowLeft']||keys['a']||keys['touchL']) { player.vx -= 0.8; player.dir = -1; }
+  if (keys['ArrowRight']||keys['d']||keys['touchR']) { player.vx += 0.8; player.dir = 1; }
+  if (keys['ArrowUp']||keys['w']||keys['touchU']) player.vy -= 0.8;
+  if (keys['ArrowDown']||keys['s']||keys['touchD']) player.vy += 0.8;
+
+  player.vx *= 0.85; player.vy *= 0.85;
+  player.vx = Math.max(-speed, Math.min(speed, player.vx));
+  player.vy = Math.max(-speed, Math.min(speed, player.vy));
+  player.x += player.vx; player.y += player.vy;
+  player.x = Math.max(50, Math.min(W-50, player.x));
+  player.y = Math.max(50, Math.min(H-60, player.y));
+
+  if (player.eatAnim > 0) { player.mouthOpen = Math.sin(player.eatAnim*0.3)*0.8; player.eatAnim--; }
+  else player.mouthOpen *= 0.8;
+
+  const tail = Math.sin(t*0.12)*0.18;
+  ctx.save();
+  ctx.translate(player.x, player.y);
+  if (player.dir < 0) ctx.scale(-1,1);
+  ctx.rotate(tail*0.2);
+
+  ctx.fillStyle = '#c8b400';
+  ctx.beginPath(); ctx.ellipse(0,0,55,32,0,0,Math.PI*2); ctx.fill();
+
+  const sh = ctx.createLinearGradient(-55,-32,55,32);
+  sh.addColorStop(0,'rgba(255,220,0,0.35)');
+  sh.addColorStop(0.5,'rgba(80,160,40,0.25)');
+  sh.addColorStop(1,'rgba(0,80,40,0.35)');
+  ctx.fillStyle = sh; ctx.beginPath(); ctx.ellipse(0,0,55,32,0,0,Math.PI*2); ctx.fill();
+
+  ctx.fillStyle = 'rgba(30,80,200,0.3)';
+  [[-10,-12,5],[15,-16,4],[28,-4,6],[-5,16,5],[38,8,4],[-30,4,5]].forEach(([sx,sy,sr])=>{
+    ctx.beginPath(); ctx.arc(sx,sy,sr,0,Math.PI*2); ctx.fill();
+  });
+
+  ctx.fillStyle = '#9a8800';
+  ctx.beginPath(); ctx.moveTo(-40,-3); ctx.quadraticCurveTo(-10,-44,42,-3); ctx.lineTo(42,-30); ctx.lineTo(-40,-30); ctx.closePath(); ctx.fill();
+
+  ctx.save(); ctx.translate(-50,0); ctx.rotate(tail);
+  ctx.fillStyle = '#9a8800';
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-18,-22); ctx.lineTo(-14,0); ctx.lineTo(-18,22); ctx.closePath(); ctx.fill();
+  ctx.restore();
+
+  ctx.save(); ctx.translate(34,0);
+  ctx.fillStyle = '#c8845a';
+  ctx.beginPath(); ctx.arc(0,0,24,0,Math.PI*2); ctx.fill();
+
+  ctx.fillStyle = '#111';
+  ctx.beginPath(); ctx.ellipse(0,-14,24,8,0,0,Math.PI*2); ctx.fill();
+  ctx.fillRect(-24,-22,48,10);
+  ctx.fillStyle = '#080808';
+  ctx.beginPath(); ctx.ellipse(0,-20,27,5,0,0,Math.PI*2); ctx.fill();
+
+  ctx.fillStyle = 'white'; ctx.font = '5px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('patagonia',0,-19);
+
+  ctx.fillStyle = '#c8845a';
+  ctx.beginPath(); ctx.arc(0,4,19,0,Math.PI*2); ctx.fill();
+
+  ctx.fillStyle = '#5a3a1a';
+  ctx.beginPath(); ctx.arc(0,16,13,0.1,Math.PI-0.1); ctx.fill();
+  ctx.fillStyle = '#c8845a';
+  ctx.beginPath(); ctx.arc(0,12,10,0,Math.PI); ctx.fill();
+
+  ctx.strokeStyle = '#5a2a0a'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(-7,3,7,0,Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(7,3,7,0,Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-14,3); ctx.lineTo(-19,2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(14,3); ctx.lineTo(19,2); ctx.stroke();
+
+  ctx.fillStyle = '#2a1a0a';
+  ctx.beginPath(); ctx.arc(-7,3,2.5,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(7,3,2.5,0,Math.PI*2); ctx.fill();
+
+  if (player.mouthOpen > 0.1) {
+    ctx.fillStyle = '#1a0500';
+    ctx.beginPath(); ctx.arc(0,16,7,Math.PI*player.mouthOpen,Math.PI*(2-player.mouthOpen)); ctx.fill();
+  } else {
+    ctx.strokeStyle = '#5a2a0a'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(0,14,5,0.2,Math.PI-0.2); ctx.stroke();
+  }
+  ctx.restore();
+  ctx.restore();
+}
+
+function checkCollisions() {
+  fishes.forEach(f => {
+    if (!f.alive) return;
+    const dx = player.x - f.x, dy = player.y - f.y;
+    if (Math.sqrt(dx*dx+dy*dy) < 40+f.size) {
+      f.alive = false; score += f.pts;
+      player.eatAnim = 25;
+      addParticles(f.x, f.y, f.color);
+    }
+  });
+  sharks.forEach(s => {
+    if (!s.alive) return;
+    const dx = player.x - s.x, dy = player.y - s.y;
+    if (Math.sqrt(dx*dx+dy*dy) < 50) {
+      score = Math.max(0, score-3);
+      addParticles(player.x, player.y, '#f44');
+      s.x += s.vx > 0 ? 80 : -80;
+    }
+  });
+}
+
+function updateParticles() {
+  particles = particles.filter(p => p.life > 0);
+  particles.forEach(p => {
+    p.x += p.vx; p.y += p.vy; p.vy += 0.05; p.life--;
+    ctx.globalAlpha = p.life / p.maxLife;
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 4*(p.life/p.maxLife), 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+  });
+}
+
+function updateUI() {
+  document.getElementById('scoreEl').textContent = `Рыба: ${score}`;
+  document.getElementById('timeEl').textContent = `Время: ${timeLeft}`;
+  document.getElementById('levelEl').textContent = `Уровень: ${level}`;
+}
+
+function loop() {
+  t++;
+  ctx.clearRect(0, 0, W, H);
+  drawBackground();
+
+  if (state === 'playing') {
+    if (t % Math.max(60-level*8, 20) === 0) {
+      fishes = fishes.filter(f => f.alive);
+      if (fishes.length < 6+level) fishes.push(spawnFish());
+    }
+    if (t % Math.max(180-level*15, 60) === 0 && level >= 2) {
+      sharks = sharks.filter(s => s.alive);
+      if (sharks.length < level-1) sharks.push(spawnShark());
+    }
+    fishes.forEach(drawFish);
+    sharks.forEach(drawShark);
+    drawPlayer();
+    checkCollisions();
+    updateParticles();
+    updateUI();
+
+    if (timeLeft <= 10) {
+      ctx.fillStyle = `rgba(255,80,80,${0.12+0.08*Math.sin(t*0.2)})`;
+      ctx.fillRect(0,0,W,H);
+    }
+  } else {
+    fishes.forEach(drawFish);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+document.getElementById('startBtn').addEventListener('click', () => {
+  initGame();
+  state = 'playing';
+  document.getElementById('msg').style.display = 'none';
+});
+
+document.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+});
+document.addEventListener('keyup', e => { keys[e.key] = false; });
+
+['btnL','btnR','btnU','btnD'].forEach(id => {
+  const k = id.replace('btn','touch');
+  const el = document.getElementById(id);
+  el.addEventListener('pointerdown', e => { keys[k]=true; e.preventDefault(); });
+  el.addEventListener('pointerup', () => { keys[k]=false; });
+  el.addEventListener('pointerleave', () => { keys[k]=false; });
+});
+
+for (let i = 0; i < 6; i++) fishes.push(spawnFish());
+bubbles = Array.from({length:20}, () => ({
+  x: Math.random()*W, y: Math.random()*H,
+  r: 2+Math.random()*3, speed: 0.4+Math.random()*0.4,
+  wobble: Math.random()*Math.PI*2
+}));
+loop();
+</script>
+</body>
+</html>
